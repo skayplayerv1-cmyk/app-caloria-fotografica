@@ -5,7 +5,6 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { TrendingUp, TrendingDown, Target, Calendar } from 'lucide-react'
 import { type Meal } from '@/lib/supabase'
 import { format, subDays, startOfDay } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
 
 interface DashboardTabProps {
   meals: Meal[]
@@ -21,7 +20,7 @@ export default function DashboardTab({ meals }: DashboardTabProps) {
     )
     
     return {
-      date: format(date, 'dd/MM', { locale: ptBR }),
+      date: format(date, 'dd/MM'),
       calories: dayMeals.reduce((sum, m) => sum + Number(m.total_calories), 0),
       protein: dayMeals.reduce((sum, m) => sum + Number(m.total_protein), 0),
       carbs: dayMeals.reduce((sum, m) => sum + Number(m.total_carbs), 0),
