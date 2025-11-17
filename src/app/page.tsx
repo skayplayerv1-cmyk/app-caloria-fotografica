@@ -1,45 +1,93 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Camera, TrendingUp, MessageCircle, Home, BarChart3, Upload, Loader2 } from 'lucide-react'
+import { Camera, TrendingUp, MessageCircle, Home, BarChart3, Upload, Loader2, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { supabase, type Meal } from '@/lib/supabase'
+import { supabase, mealOperations, type Meal } from '@/lib/supabase'
 import { analyzeMealImage } from '@/lib/openai'
 import { toast } from 'sonner'
+import { useRouter } from 'next/navigation'
 import DashboardTab from '@/components/custom/dashboard-tab'
 import ChatTab from '@/components/custom/chat-tab'
 import HistoryTab from '@/components/custom/history-tab'
 
 export default function FatSecretApp() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState('home')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [meals, setMeals] = useState<Meal[]>([])
-  const [userId] = useState('demo-user-123') // Em produção, usar autenticação real
+  const [userId, setUserId] = useState<string | null>(null)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadMeals()
+    checkUser()
   }, [])
 
-  const loadMeals = async () => {
-    const { data, error } = await supabase
-      .from('meals')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
+  useEffect(() => {
+    if (userId) {
+      loadMeals()
+    }
+  }, [userId])
 
-    if (!error && data) {
+  const checkUser = async () => {
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession()
+      
+      if (error) {
+        console.error('Erro ao verificar sessão:', error)
+        router.push('/login')
+        return
+      }
+      
+      if (!session) {
+        router.push('/login')
+        return
+      }
+
+      setUserId(session.user.id)
+      setUserEmail(session.user.email || null)
+      setLoading(false)
+    } catch (error) {
+      console.error('Erro ao verificar usuário:', error)
+      router.push('/login')
+    }
+  }
+
+  const handleLogout = async () => {
+    try {
+      const { error } = await supabase.auth.signOut()
+      
+      if (error) throw error
+      
+      router.push('/login')
+      router.refresh()
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error)
+      toast.error('Erro ao sair')
+    }
+  }
+
+  const loadMeals = async () => {
+    if (!userId) return
+
+    try {
+      const data = await mealOperations.getAll(userId)
       setMeals(data)
+    } catch (error) {
+      console.error('Erro ao carregar refeições:', error)
+      toast.error('Erro ao carregar refeições')
     }
   }
 
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
-    if (!file) return
+    if (!file || !userId) return
 
     setIsAnalyzing(true)
-    toast.loading('Analisando sua refeição...')
+    const loadingToast = toast.loading('Analisando sua refeição...')
 
     try {
       // Converter imagem para base64
@@ -47,46 +95,53 @@ export default function FatSecretApp() {
       reader.readAsDataURL(file)
       
       reader.onload = async () => {
-        const base64Image = reader.result as string
+        try {
+          const base64Image = reader.result as string
 
-        // Analisar com OpenAI
-        const analysis = await analyzeMealImage(base64Image)
+          // Analisar com OpenAI
+          const analysis = await analyzeMealImage(base64Image)
 
-        // Calcular totais
-        const totals = analysis.foods.reduce(
-          (acc: any, food: any) => ({
-            calories: acc.calories + food.calories,
-            protein: acc.protein + food.protein,
-            carbs: acc.carbs + food.carbs,
-            fat: acc.fat + food.fat
-          }),
-          { calories: 0, protein: 0, carbs: 0, fat: 0 }
-        )
+          // Calcular totais
+          const totals = analysis.foods.reduce(
+            (acc: any, food: any) => ({
+              calories: acc.calories + food.calories,
+              protein: acc.protein + food.protein,
+              carbs: acc.carbs + food.carbs,
+              fat: acc.fat + food.fat
+            }),
+            { calories: 0, protein: 0, carbs: 0, fat: 0 }
+          )
 
-        // Salvar no Supabase
-        const { error } = await supabase.from('meals').insert({
-          user_id: userId,
-          image_url: base64Image,
-          analysis,
-          total_calories: totals.calories,
-          total_protein: totals.protein,
-          total_carbs: totals.carbs,
-          total_fat: totals.fat,
-          meal_type: getMealType()
-        })
+          // Salvar no Supabase
+          await mealOperations.create({
+            user_id: userId,
+            image_url: base64Image,
+            analysis,
+            total_calories: totals.calories,
+            total_protein: totals.protein,
+            total_carbs: totals.carbs,
+            total_fat: totals.fat,
+            meal_type: getMealType()
+          })
 
-        if (error) throw error
+          toast.success('Refeição analisada com sucesso!', { id: loadingToast })
+          await loadMeals()
+          setActiveTab('history')
+        } catch (error) {
+          console.error('Erro ao processar análise:', error)
+          toast.error('Erro ao analisar refeição. Tente novamente.', { id: loadingToast })
+        }
+      }
 
-        toast.success('Refeição analisada com sucesso!')
-        await loadMeals()
-        setActiveTab('history')
+      reader.onerror = () => {
+        toast.error('Erro ao ler arquivo. Tente novamente.', { id: loadingToast })
+        setIsAnalyzing(false)
       }
     } catch (error) {
       console.error('Erro ao analisar refeição:', error)
-      toast.error('Erro ao analisar refeição. Tente novamente.')
+      toast.error('Erro ao analisar refeição. Tente novamente.', { id: loadingToast })
     } finally {
       setIsAnalyzing(false)
-      toast.dismiss()
     }
   }
 
@@ -96,6 +151,14 @@ export default function FatSecretApp() {
     if (hour < 16) return 'Almoço'
     if (hour < 20) return 'Lanche'
     return 'Jantar'
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500"></div>
+      </div>
+    )
   }
 
   const todayCalories = meals
@@ -127,6 +190,15 @@ export default function FatSecretApp() {
                   {todayCalories.toFixed(0)} kcal hoje
                 </span>
               </div>
+              
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleLogout}
+                className="text-gray-400 hover:text-white hover:bg-white/10"
+              >
+                <LogOut className="w-4 h-4" />
+              </Button>
             </div>
           </div>
         </div>
@@ -235,7 +307,7 @@ export default function FatSecretApp() {
           </TabsContent>
 
           <TabsContent value="dashboard" className="mt-0">
-            <DashboardTab meals={meals} userId={userId} />
+            <DashboardTab meals={meals} userId={userId || ''} />
           </TabsContent>
 
           <TabsContent value="history" className="mt-0">
@@ -243,7 +315,7 @@ export default function FatSecretApp() {
           </TabsContent>
 
           <TabsContent value="chat" className="mt-0">
-            <ChatTab userId={userId} />
+            <ChatTab userId={userId || ''} />
           </TabsContent>
         </Tabs>
       </main>

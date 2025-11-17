@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 export async function middleware(req: NextRequest) {
-  let res = NextResponse.next({
+  let response = NextResponse.next({
     request: {
       headers: req.headers,
     },
@@ -23,12 +23,12 @@ export async function middleware(req: NextRequest) {
             value,
             ...options,
           })
-          res = NextResponse.next({
+          response = NextResponse.next({
             request: {
               headers: req.headers,
             },
           })
-          res.cookies.set({
+          response.cookies.set({
             name,
             value,
             ...options,
@@ -40,12 +40,12 @@ export async function middleware(req: NextRequest) {
             value: '',
             ...options,
           })
-          res = NextResponse.next({
+          response = NextResponse.next({
             request: {
               headers: req.headers,
             },
           })
-          res.cookies.set({
+          response.cookies.set({
             name,
             value: '',
             ...options,
@@ -59,17 +59,23 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession()
 
-  // Se não estiver autenticado e não estiver na página de login, redirecionar
-  if (!session && req.nextUrl.pathname !== '/login') {
-    return NextResponse.redirect(new URL('/login', req.url))
+  // Rotas públicas que não precisam de autenticação
+  const publicRoutes = ['/login', '/auth/callback']
+  const isPublicRoute = publicRoutes.some(route => req.nextUrl.pathname.startsWith(route))
+
+  // Se não está logado e tenta acessar rota protegida
+  if (!session && !isPublicRoute) {
+    const redirectUrl = new URL('/login', req.url)
+    return NextResponse.redirect(redirectUrl)
   }
 
-  // Se estiver autenticado e tentar acessar login, redirecionar para home
+  // Se está logado e tenta acessar login
   if (session && req.nextUrl.pathname === '/login') {
-    return NextResponse.redirect(new URL('/', req.url))
+    const redirectUrl = new URL('/', req.url)
+    return NextResponse.redirect(redirectUrl)
   }
 
-  return res
+  return response
 }
 
 export const config = {
