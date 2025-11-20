@@ -1,17 +1,16 @@
 import { createClient } from '@supabase/supabase-js'
+import { updateDailyStats } from './daily-stats-updater'
 
-// Valores padrão seguros para evitar erros
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key'
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 
-// Verificar se as credenciais estão configuradas
-const isConfigured = 
-  process.env.NEXT_PUBLIC_SUPABASE_URL && 
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
-  !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder')
-
-if (!isConfigured) {
-  console.warn('⚠️ Supabase não configurado. Configure nas variáveis de ambiente.')
+export const isSupabaseConfigured = () => {
+  return Boolean(
+    supabaseUrl && 
+    supabaseAnonKey && 
+    !supabaseUrl.includes('placeholder') &&
+    supabaseUrl.includes('supabase.co')
+  )
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -19,14 +18,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    // DESABILITAR confirmação de email para desenvolvimento
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    storageKey: 'fatsecret-auth-token',
     flowType: 'pkce'
   }
 })
 
-// Helper para verificar se está configurado
-export const isSupabaseConfigured = () => isConfigured
-
+// Types
 export type Meal = {
   id: string
   user_id: string
@@ -49,29 +47,27 @@ export type Meal = {
   created_at: string
 }
 
-export type ChatMessage = {
-  id: string
-  user_id: string
-  role: 'user' | 'assistant'
-  content: string
-  created_at: string
-}
-
 export type Profile = {
   id: string
   email: string
   full_name?: string
-  avatar_url?: string
+  weight?: number
+  height?: number
+  age?: number
+  gender?: 'male' | 'female' | 'other'
+  activity_level?: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active'
+  goal?: 'lose_weight' | 'maintain' | 'gain_weight' | 'gain_muscle'
+  daily_calorie_goal: number
+  daily_protein_goal: number
+  daily_carbs_goal: number
+  daily_fat_goal: number
   created_at: string
   updated_at: string
 }
 
-// Helper functions para facilitar operações comuns
+// Meal operations
 export const mealOperations = {
-  // Buscar todas as refeições do usuário
   async getAll(userId: string) {
-    if (!isConfigured) throw new Error('Supabase não configurado')
-    
     const { data, error } = await supabase
       .from('meals_complete')
       .select('*')
@@ -82,10 +78,7 @@ export const mealOperations = {
     return data as Meal[]
   },
 
-  // Adicionar nova refeição
   async create(meal: Omit<Meal, 'id' | 'created_at'>) {
-    if (!isConfigured) throw new Error('Supabase não configurado')
-    
     const { data, error } = await supabase
       .from('meals_complete')
       .insert(meal)
@@ -93,13 +86,21 @@ export const mealOperations = {
       .single()
     
     if (error) throw error
+
+    // Atualizar estatísticas diárias automaticamente
+    if (data) {
+      await updateDailyStats(meal.user_id, {
+        total_calories: meal.total_calories,
+        total_protein: meal.total_protein,
+        total_carbs: meal.total_carbs,
+        total_fat: meal.total_fat
+      })
+    }
+
     return data as Meal
   },
 
-  // Buscar refeições de hoje
   async getToday(userId: string) {
-    if (!isConfigured) throw new Error('Supabase não configurado')
-    
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     
@@ -112,36 +113,19 @@ export const mealOperations = {
     
     if (error) throw error
     return data as Meal[]
-  }
-}
-
-export const chatOperations = {
-  // Buscar mensagens do chat
-  async getMessages(userId: string, limit = 50) {
-    if (!isConfigured) throw new Error('Supabase não configurado')
-    
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: true })
-      .limit(limit)
-    
-    if (error) throw error
-    return data as ChatMessage[]
   },
 
-  // Adicionar nova mensagem
-  async addMessage(message: Omit<ChatMessage, 'id' | 'created_at'>) {
-    if (!isConfigured) throw new Error('Supabase não configurado')
-    
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .insert(message)
-      .select()
-      .single()
+  async delete(mealId: string, userId: string) {
+    const { error } = await supabase
+      .from('meals_complete')
+      .delete()
+      .eq('id', mealId)
+      .eq('user_id', userId)
     
     if (error) throw error
-    return data as ChatMessage
+
+    // Recalcular estatísticas após deletar
+    const { recalculateDailyStats } = await import('./daily-stats-updater')
+    await recalculateDailyStats(userId)
   }
 }

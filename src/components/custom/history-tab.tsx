@@ -2,13 +2,11 @@
 
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Clock, Trash2, RefreshCw } from 'lucide-react'
+import { Clock, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import { type Meal } from '@/lib/supabase'
-import { format } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
-import { supabase } from '@/lib/supabase'
-import { toast } from 'sonner'
 import { useState } from 'react'
+import { toast } from 'sonner'
+import { mealOperations } from '@/lib/supabase'
 
 interface HistoryTabProps {
   meals: Meal[]
@@ -16,170 +14,221 @@ interface HistoryTabProps {
 }
 
 export default function HistoryTab({ meals, onRefresh }: HistoryTabProps) {
+  const [expandedMeal, setExpandedMeal] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
-  const handleDelete = async (id: string) => {
-    setDeletingId(id)
+  const handleDelete = async (mealId: string) => {
+    setDeletingId(mealId)
     try {
-      const { error } = await supabase
-        .from('meals')
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
-
-      toast.success('Refeição removida com sucesso!')
+      await mealOperations.delete(mealId)
+      toast.success('Refeição removida')
       onRefresh()
     } catch (error) {
-      console.error('Erro ao deletar refeição:', error)
-      toast.error('Erro ao remover refeição.')
+      console.error('Erro ao deletar:', error)
+      toast.error('Erro ao remover refeição')
     } finally {
       setDeletingId(null)
     }
   }
 
-  // Agrupar refeições por data
-  const groupedMeals = meals.reduce((acc, meal) => {
-    const date = format(new Date(meal.created_at), 'dd/MM/yyyy', { locale: ptBR })
-    if (!acc[date]) {
-      acc[date] = []
-    }
+  const sortedMeals = [...meals].sort((a, b) => 
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
+
+  const groupedMeals = sortedMeals.reduce((acc, meal) => {
+    const date = new Date(meal.created_at).toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric'
+    })
+    if (!acc[date]) acc[date] = []
     acc[date].push(meal)
     return acc
   }, {} as Record<string, Meal[]>)
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold text-white mb-2">Histórico</h2>
-          <p className="text-gray-400">Todas as suas refeições registradas</p>
+  if (meals.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <h2 className="text-3xl font-bold text-white">Histórico</h2>
+          <p className="text-gray-400">Suas refeições registradas</p>
         </div>
-        <Button
-          onClick={onRefresh}
-          variant="outline"
-          className="border-white/10 bg-white/5 hover:bg-white/10 text-white"
-        >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Atualizar
-        </Button>
-      </div>
 
-      {/* Meals List */}
-      {Object.keys(groupedMeals).length === 0 ? (
         <Card className="p-12 border-white/10 bg-black/20 backdrop-blur-sm text-center">
-          <div className="max-w-md mx-auto space-y-4">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-500 to-gray-600 flex items-center justify-center mx-auto shadow-lg">
-              <Clock className="w-10 h-10 text-white" />
+          <div className="space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-gray-600 to-gray-700 flex items-center justify-center mx-auto">
+              <Clock className="w-8 h-8 text-gray-400" />
             </div>
             <div>
-              <h3 className="text-xl font-semibold text-white mb-2">
-                Nenhuma refeição registrada
-              </h3>
-              <p className="text-gray-400">
-                Comece fotografando suas refeições para acompanhar sua nutrição
-              </p>
+              <h3 className="text-xl font-semibold text-white mb-2">Nenhuma refeição ainda</h3>
+              <p className="text-gray-400">Comece fotografando sua primeira refeição</p>
             </div>
           </div>
         </Card>
-      ) : (
-        <div className="space-y-6">
-          {Object.entries(groupedMeals).map(([date, dateMeals]) => (
-            <div key={date}>
-              <div className="flex items-center gap-2 mb-4">
-                <Clock className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-lg font-semibold text-white">{date}</h3>
-                <div className="flex-1 h-px bg-white/10" />
-                <span className="text-sm text-gray-400">
-                  {dateMeals.reduce((sum, m) => sum + Number(m.total_calories), 0).toFixed(0)} kcal
-                </span>
-              </div>
+      </div>
+    )
+  }
 
-              <div className="grid gap-4">
-                {dateMeals.map((meal) => (
-                  <Card key={meal.id} className="overflow-hidden border-white/10 bg-black/20 backdrop-blur-sm hover:bg-black/30 transition-all duration-300">
-                    <div className="flex flex-col sm:flex-row gap-4 p-4">
-                      {/* Image */}
-                      <div className="w-full sm:w-32 h-32 rounded-xl overflow-hidden bg-white/5 flex-shrink-0">
-                        <img
-                          src={meal.image_url}
-                          alt="Refeição"
-                          className="w-full h-full object-cover"
-                        />
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <h2 className="text-3xl font-bold text-white">Histórico</h2>
+        <p className="text-gray-400">{meals.length} refeições registradas</p>
+      </div>
+
+      <div className="space-y-6">
+        {Object.entries(groupedMeals).map(([date, dayMeals]) => (
+          <div key={date} className="space-y-3">
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+              {date}
+            </h3>
+            
+            <div className="space-y-3">
+              {dayMeals.map((meal) => {
+                const isExpanded = expandedMeal === meal.id
+                const time = new Date(meal.created_at).toLocaleTimeString('pt-BR', {
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })
+
+                return (
+                  <Card key={meal.id} className="overflow-hidden border-white/10 bg-black/20 backdrop-blur-sm">
+                    <div className="p-4 space-y-4">
+                      {/* Header */}
+                      <div className="flex items-start gap-4">
+                        {meal.image_url && (
+                          <img
+                            src={meal.image_url}
+                            alt="Refeição"
+                            className="w-20 h-20 rounded-xl object-cover"
+                          />
+                        )}
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h4 className="font-semibold text-white">{meal.meal_type}</h4>
+                              <p className="text-sm text-gray-400 flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                {time}
+                              </p>
+                            </div>
+                            
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDelete(meal.id)}
+                              disabled={deletingId === meal.id}
+                              className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+
+                          {/* Totais */}
+                          <div className="grid grid-cols-4 gap-2 mt-3">
+                            <div className="text-center">
+                              <p className="text-xs text-gray-400">Calorias</p>
+                              <p className="text-sm font-semibold text-orange-400">
+                                {Number(meal.total_calories).toFixed(0)}
+                              </p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-xs text-gray-400">Proteínas</p>
+                              <p className="text-sm font-semibold text-blue-400">
+                                {Number(meal.total_protein).toFixed(1)}g
+                              </p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-xs text-gray-400">Carbs</p>
+                              <p className="text-sm font-semibold text-yellow-400">
+                                {Number(meal.total_carbs).toFixed(1)}g
+                              </p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-xs text-gray-400">Gorduras</p>
+                              <p className="text-sm font-semibold text-purple-400">
+                                {Number(meal.total_fat).toFixed(1)}g
+                              </p>
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
-                      {/* Info */}
-                      <div className="flex-1 space-y-3">
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="px-3 py-1 rounded-lg bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
-                                {meal.meal_type || 'Refeição'}
-                              </span>
-                              <span className="text-xs text-gray-500">
-                                {format(new Date(meal.created_at), 'HH:mm', { locale: ptBR })}
-                              </span>
-                            </div>
-                            <h4 className="font-semibold text-white text-lg">
-                              {meal.total_calories.toFixed(0)} kcal
-                            </h4>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDelete(meal.id)}
-                            disabled={deletingId === meal.id}
-                            className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
+                      {/* Expandir Detalhes */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setExpandedMeal(isExpanded ? null : meal.id)}
+                        className="w-full text-gray-400 hover:text-white"
+                      >
+                        {isExpanded ? (
+                          <>
+                            <ChevronUp className="w-4 h-4 mr-2" />
+                            Ocultar detalhes
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="w-4 h-4 mr-2" />
+                            Ver detalhes
+                          </>
+                        )}
+                      </Button>
 
-                        {/* Macros */}
-                        <div className="grid grid-cols-3 gap-3">
-                          <div className="px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                            <p className="text-xs text-gray-400 mb-1">Proteínas</p>
-                            <p className="text-sm font-semibold text-blue-400">
-                              {Number(meal.total_protein).toFixed(1)}g
-                            </p>
+                      {/* Detalhes Expandidos */}
+                      {isExpanded && meal.analysis && (
+                        <div className="pt-4 border-t border-white/10 space-y-3">
+                          <h5 className="text-sm font-semibold text-white">Alimentos Detectados:</h5>
+                          <div className="space-y-2">
+                            {meal.analysis.foods.map((food: any, i: number) => (
+                              <div key={i} className="p-3 rounded-lg bg-white/5 border border-white/10">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1">
+                                    <p className="font-medium text-white">{food.name}</p>
+                                    <p className="text-xs text-gray-400">{food.portion}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-sm font-semibold text-orange-400">
+                                      {food.calories} kcal
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                                  <div>
+                                    <span className="text-gray-400">P: </span>
+                                    <span className="text-blue-400 font-medium">{food.protein}g</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">C: </span>
+                                    <span className="text-yellow-400 font-medium">{food.carbs}g</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">G: </span>
+                                    <span className="text-purple-400 font-medium">{food.fat}g</span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                          <div className="px-3 py-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                            <p className="text-xs text-gray-400 mb-1">Carboidratos</p>
-                            <p className="text-sm font-semibold text-orange-400">
-                              {Number(meal.total_carbs).toFixed(1)}g
-                            </p>
-                          </div>
-                          <div className="px-3 py-2 rounded-lg bg-purple-500/10 border border-purple-500/20">
-                            <p className="text-xs text-gray-400 mb-1">Gorduras</p>
-                            <p className="text-sm font-semibold text-purple-400">
-                              {Number(meal.total_fat).toFixed(1)}g
-                            </p>
-                          </div>
-                        </div>
 
-                        {/* Foods */}
-                        <div className="space-y-1">
-                          {meal.analysis.foods.map((food, i) => (
-                            <div key={i} className="flex items-center justify-between text-sm">
-                              <span className="text-gray-300">
-                                {food.name} ({food.quantity})
-                              </span>
-                              <span className="text-gray-500">
-                                {food.calories} kcal
-                              </span>
+                          {meal.analysis.notes && (
+                            <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                              <p className="text-sm text-emerald-400">
+                                <span className="font-semibold">Observações: </span>
+                                {meal.analysis.notes}
+                              </p>
                             </div>
-                          ))}
+                          )}
                         </div>
-                      </div>
+                      )}
                     </div>
                   </Card>
-                ))}
-              </div>
+                )
+              })}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

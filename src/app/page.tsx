@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Camera, TrendingUp, MessageCircle, Home, BarChart3, Upload, Loader2, LogOut } from 'lucide-react'
+import { Camera, TrendingUp, MessageCircle, Home, BarChart3, Upload, Loader2, LogOut, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation'
 import DashboardTab from '@/components/custom/dashboard-tab'
 import ChatTab from '@/components/custom/chat-tab'
 import HistoryTab from '@/components/custom/history-tab'
+import ProfileTab from '@/components/custom/profile-tab'
 
 export default function FatSecretApp() {
   const router = useRouter()
@@ -21,9 +22,68 @@ export default function FatSecretApp() {
   const [userId, setUserId] = useState<string | null>(null)
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [needsLogin, setNeedsLogin] = useState(false)
 
   useEffect(() => {
-    checkUser()
+    // Verificar sessão inicial
+    const initAuth = async () => {
+      try {
+        console.log('🔍 Verificando sessão inicial...')
+        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        if (error) {
+          console.error('❌ Erro ao verificar sessão:', error)
+          setNeedsLogin(true)
+          setLoading(false)
+          return
+        }
+        
+        if (session?.user) {
+          console.log('✅ Sessão encontrada:', session.user.id)
+          setUserId(session.user.id)
+          setUserEmail(session.user.email || null)
+          setNeedsLogin(false)
+        } else {
+          console.log('⚠️ Sem sessão ativa')
+          setNeedsLogin(true)
+        }
+      } catch (error) {
+        console.error('❌ Erro ao verificar sessão:', error)
+        setNeedsLogin(true)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    initAuth()
+    
+    // Listener para mudanças de autenticação
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('🔄 Auth state changed:', event, session?.user?.id)
+      
+      if (event === 'SIGNED_IN' && session?.user) {
+        console.log('✅ Login detectado, carregando app...')
+        setUserId(session.user.id)
+        setUserEmail(session.user.email || null)
+        setNeedsLogin(false)
+        setLoading(false)
+      } else if (event === 'SIGNED_OUT') {
+        console.log('🚪 Logout detectado')
+        setUserId(null)
+        setUserEmail(null)
+        setNeedsLogin(true)
+        setLoading(false)
+      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+        console.log('🔄 Token atualizado')
+        setUserId(session.user.id)
+        setUserEmail(session.user.email || null)
+        setNeedsLogin(false)
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
   }, [])
 
   useEffect(() => {
@@ -32,38 +92,14 @@ export default function FatSecretApp() {
     }
   }, [userId])
 
-  const checkUser = async () => {
-    try {
-      const { data: { session }, error } = await supabase.auth.getSession()
-      
-      if (error) {
-        console.error('Erro ao verificar sessão:', error)
-        router.push('/login')
-        return
-      }
-      
-      if (!session) {
-        router.push('/login')
-        return
-      }
-
-      setUserId(session.user.id)
-      setUserEmail(session.user.email || null)
-      setLoading(false)
-    } catch (error) {
-      console.error('Erro ao verificar usuário:', error)
-      router.push('/login')
-    }
-  }
-
   const handleLogout = async () => {
     try {
       const { error } = await supabase.auth.signOut()
       
       if (error) throw error
       
-      router.push('/login')
-      router.refresh()
+      toast.success('Logout realizado com sucesso!')
+      setNeedsLogin(true)
     } catch (error) {
       console.error('Erro ao fazer logout:', error)
       toast.error('Erro ao sair')
@@ -153,10 +189,39 @@ export default function FatSecretApp() {
     return 'Jantar'
   }
 
+  // Tela de loading
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500"></div>
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500 mx-auto"></div>
+          <p className="text-gray-400 text-sm">Carregando...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Tela de login necessário
+  if (needsLogin) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md p-8 border-white/10 bg-black/40 backdrop-blur-xl text-center space-y-6">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-500 shadow-2xl shadow-emerald-500/30 mx-auto">
+            <TrendingUp className="w-8 h-8 text-white" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent mb-2">
+              FatSecret
+            </h1>
+            <p className="text-gray-400">Faça login para acessar o app</p>
+          </div>
+          <Button
+            onClick={() => router.push('/login')}
+            className="w-full bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-white font-semibold py-6 rounded-xl shadow-lg shadow-emerald-500/30 transition-all duration-300 hover:scale-105"
+          >
+            Ir para Login
+          </Button>
+        </Card>
       </div>
     )
   }
@@ -317,6 +382,10 @@ export default function FatSecretApp() {
           <TabsContent value="chat" className="mt-0">
             <ChatTab userId={userId || ''} />
           </TabsContent>
+
+          <TabsContent value="profile" className="mt-0">
+            <ProfileTab userId={userId || ''} />
+          </TabsContent>
         </Tabs>
       </main>
 
@@ -328,7 +397,8 @@ export default function FatSecretApp() {
               { id: 'home', icon: Home, label: 'Início' },
               { id: 'dashboard', icon: BarChart3, label: 'Dashboard' },
               { id: 'history', icon: Camera, label: 'Histórico' },
-              { id: 'chat', icon: MessageCircle, label: 'Chat IA' }
+              { id: 'chat', icon: MessageCircle, label: 'Chat IA' },
+              { id: 'profile', icon: User, label: 'Perfil' }
             ].map((tab) => (
               <button
                 key={tab.id}

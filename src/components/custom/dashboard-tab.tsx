@@ -1,251 +1,284 @@
 'use client'
 
+import { useState, useEffect, useMemo } from 'react'
 import { Card } from '@/components/ui/card'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
-import { TrendingUp, TrendingDown, Target, Calendar } from 'lucide-react'
+import { TrendingUp, TrendingDown, Target, Calendar, Flame, Activity, Loader2 } from 'lucide-react'
 import { type Meal } from '@/lib/supabase'
-import { format, subDays, startOfDay } from 'date-fns'
+import { profileOperations, dailyStatsOperations, type UserProfile, type DailyStats } from '@/lib/profile'
 
 interface DashboardTabProps {
   meals: Meal[]
   userId: string
 }
 
-export default function DashboardTab({ meals }: DashboardTabProps) {
-  // Dados dos últimos 7 dias
-  const last7Days = Array.from({ length: 7 }, (_, i) => {
-    const date = subDays(new Date(), 6 - i)
-    const dayMeals = meals.filter(m => 
-      startOfDay(new Date(m.created_at)).getTime() === startOfDay(date).getTime()
-    )
-    
-    return {
-      date: format(date, 'dd/MM'),
-      calories: dayMeals.reduce((sum, m) => sum + Number(m.total_calories), 0),
-      protein: dayMeals.reduce((sum, m) => sum + Number(m.total_protein), 0),
-      carbs: dayMeals.reduce((sum, m) => sum + Number(m.total_carbs), 0),
-      fat: dayMeals.reduce((sum, m) => sum + Number(m.total_fat), 0)
+export default function DashboardTab({ meals, userId }: DashboardTabProps) {
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    loadData()
+  }, [userId])
+
+  const loadData = async () => {
+    try {
+      const [profileData, statsData] = await Promise.all([
+        profileOperations.get(userId),
+        dailyStatsOperations.getLastDays(userId, 7)
+      ])
+      setProfile(profileData)
+      setDailyStats(statsData)
+    } catch (error) {
+      console.error('Erro ao carregar dados:', error)
+    } finally {
+      setLoading(false)
     }
-  })
-
-  // Totais de hoje
-  const today = meals.filter(m => 
-    new Date(m.created_at).toDateString() === new Date().toDateString()
-  )
-  
-  const todayTotals = {
-    calories: today.reduce((sum, m) => sum + Number(m.total_calories), 0),
-    protein: today.reduce((sum, m) => sum + Number(m.total_protein), 0),
-    carbs: today.reduce((sum, m) => sum + Number(m.total_carbs), 0),
-    fat: today.reduce((sum, m) => sum + Number(m.total_fat), 0)
   }
 
-  // Dados para gráfico de pizza (macros de hoje)
-  const macrosData = [
-    { name: 'Proteínas', value: todayTotals.protein * 4, color: '#3b82f6' },
-    { name: 'Carboidratos', value: todayTotals.carbs * 4, color: '#f59e0b' },
-    { name: 'Gorduras', value: todayTotals.fat * 9, color: '#a855f7' }
-  ]
+  const stats = useMemo(() => {
+    const today = new Date().toDateString()
+    const todayMeals = meals.filter(m => new Date(m.created_at).toDateString() === today)
+    
+    const totalCalories = todayMeals.reduce((sum, m) => sum + Number(m.total_calories), 0)
+    const totalProtein = todayMeals.reduce((sum, m) => sum + Number(m.total_protein), 0)
+    const totalCarbs = todayMeals.reduce((sum, m) => sum + Number(m.total_carbs), 0)
+    const totalFat = todayMeals.reduce((sum, m) => sum + Number(m.total_fat), 0)
 
-  // Média semanal
-  const weeklyAverage = {
-    calories: last7Days.reduce((sum, d) => sum + d.calories, 0) / 7,
-    protein: last7Days.reduce((sum, d) => sum + d.protein, 0) / 7,
-    carbs: last7Days.reduce((sum, d) => sum + d.carbs, 0) / 7,
-    fat: last7Days.reduce((sum, d) => sum + d.fat, 0) / 7
+    // Últimos 7 dias - usar dailyStats se disponível, senão calcular dos meals
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date()
+      date.setDate(date.getDate() - i)
+      return date.toISOString().split('T')[0]
+    }).reverse()
+
+    const weeklyData = last7Days.map(date => {
+      // Tentar usar dailyStats primeiro
+      const stat = dailyStats.find(s => s.date === date)
+      if (stat) {
+        return {
+          date,
+          calories: stat.total_calories,
+          protein: stat.total_protein,
+          carbs: stat.total_carbs,
+          fat: stat.total_fat
+        }
+      }
+
+      // Fallback: calcular dos meals
+      const dayMeals = meals.filter(m => m.created_at.split('T')[0] === date)
+      return {
+        date,
+        calories: dayMeals.reduce((sum, m) => sum + Number(m.total_calories), 0),
+        protein: dayMeals.reduce((sum, m) => sum + Number(m.total_protein), 0),
+        carbs: dayMeals.reduce((sum, m) => sum + Number(m.total_carbs), 0),
+        fat: dayMeals.reduce((sum, m) => sum + Number(m.total_fat), 0)
+      }
+    })
+
+    const avgCalories = weeklyData.reduce((sum, d) => sum + d.calories, 0) / 7
+
+    return {
+      today: { calories: totalCalories, protein: totalProtein, carbs: totalCarbs, fat: totalFat },
+      weekly: weeklyData,
+      avgCalories,
+      totalMeals: todayMeals.length
+    }
+  }, [meals, dailyStats])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+      </div>
+    )
   }
 
-  // Comparação com ontem
-  const yesterday = meals.filter(m => {
-    const date = new Date(m.created_at)
-    const yesterdayDate = subDays(new Date(), 1)
-    return date.toDateString() === yesterdayDate.toDateString()
-  })
-  
-  const yesterdayCalories = yesterday.reduce((sum, m) => sum + Number(m.total_calories), 0)
-  const caloriesDiff = todayTotals.calories - yesterdayCalories
-  const caloriesTrend = caloriesDiff > 0 ? 'up' : 'down'
+  // Usar metas do perfil ou valores padrão
+  const calorieGoal = profile?.daily_calorie_goal || 2000
+  const proteinGoal = profile?.daily_protein_goal || 150
+  const carbsGoal = profile?.daily_carbs_goal || 250
+  const fatGoal = profile?.daily_fat_goal || 65
+
+  const progress = (stats.today.calories / calorieGoal) * 100
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h2 className="text-3xl font-bold text-white mb-2">Dashboard</h2>
+      <div className="space-y-2">
+        <h2 className="text-3xl font-bold text-white">Dashboard</h2>
         <p className="text-gray-400">Acompanhe seu progresso nutricional</p>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="p-6 border-white/10 bg-gradient-to-br from-orange-500/10 to-red-500/10 backdrop-blur-sm">
-          <div className="flex items-start justify-between mb-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center shadow-lg shadow-orange-500/20">
-              <Target className="w-6 h-6 text-white" />
+      {/* Meta Diária */}
+      <Card className="p-6 border-white/10 bg-gradient-to-br from-emerald-500/10 via-cyan-500/5 to-transparent backdrop-blur-sm">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                <Target className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-white">Meta Diária</h3>
+                <p className="text-sm text-gray-400">Calorias consumidas hoje</p>
+              </div>
             </div>
-            {caloriesDiff !== 0 && (
-              <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${
-                caloriesTrend === 'up' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-              }`}>
-                {caloriesTrend === 'up' ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                <span className="text-xs font-medium">{Math.abs(caloriesDiff).toFixed(0)}</span>
-              </div>
-            )}
+            <div className="text-right">
+              <p className="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+                {stats.today.calories.toFixed(0)}
+              </p>
+              <p className="text-sm text-gray-400">de {calorieGoal} kcal</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm text-gray-400 mb-1">Calorias Hoje</p>
-            <p className="text-3xl font-bold text-white">{todayTotals.calories.toFixed(0)}</p>
-            <p className="text-xs text-gray-500 mt-1">Meta: 2000 kcal</p>
-          </div>
-        </Card>
 
-        <Card className="p-6 border-white/10 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 backdrop-blur-sm">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-blue-500/20 mb-4">
-            <span className="text-white font-bold text-lg">P</span>
-          </div>
-          <div>
-            <p className="text-sm text-gray-400 mb-1">Proteínas</p>
-            <p className="text-3xl font-bold text-white">{todayTotals.protein.toFixed(1)}g</p>
-            <p className="text-xs text-gray-500 mt-1">Média: {weeklyAverage.protein.toFixed(1)}g/dia</p>
-          </div>
-        </Card>
-
-        <Card className="p-6 border-white/10 bg-gradient-to-br from-yellow-500/10 to-orange-500/10 backdrop-blur-sm">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-yellow-500 to-orange-500 flex items-center justify-center shadow-lg shadow-yellow-500/20 mb-4">
-            <span className="text-white font-bold text-lg">C</span>
-          </div>
-          <div>
-            <p className="text-sm text-gray-400 mb-1">Carboidratos</p>
-            <p className="text-3xl font-bold text-white">{todayTotals.carbs.toFixed(1)}g</p>
-            <p className="text-xs text-gray-500 mt-1">Média: {weeklyAverage.carbs.toFixed(1)}g/dia</p>
-          </div>
-        </Card>
-
-        <Card className="p-6 border-white/10 bg-gradient-to-br from-purple-500/10 to-pink-500/10 backdrop-blur-sm">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/20 mb-4">
-            <span className="text-white font-bold text-lg">G</span>
-          </div>
-          <div>
-            <p className="text-sm text-gray-400 mb-1">Gorduras</p>
-            <p className="text-3xl font-bold text-white">{todayTotals.fat.toFixed(1)}g</p>
-            <p className="text-xs text-gray-500 mt-1">Média: {weeklyAverage.fat.toFixed(1)}g/dia</p>
-          </div>
-        </Card>
-      </div>
-
-      {/* Charts */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Gráfico de Calorias (7 dias) */}
-        <Card className="p-6 border-white/10 bg-black/20 backdrop-blur-sm">
-          <div className="flex items-center gap-2 mb-6">
-            <Calendar className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-lg font-semibold text-white">Calorias - Últimos 7 Dias</h3>
-          </div>
-          <ResponsiveContainer width="100%" height={250}>
-            <LineChart data={last7Days}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" />
-              <XAxis dataKey="date" stroke="#9ca3af" style={{ fontSize: '12px' }} />
-              <YAxis stroke="#9ca3af" style={{ fontSize: '12px' }} />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: '#1e293b', 
-                  border: '1px solid #334155',
-                  borderRadius: '8px',
-                  color: '#fff'
-                }}
+          {/* Barra de Progresso */}
+          <div className="space-y-2">
+            <div className="h-3 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(progress, 100)}%` }}
               />
-              <Line 
-                type="monotone" 
-                dataKey="calories" 
-                stroke="#10b981" 
-                strokeWidth={3}
-                dot={{ fill: '#10b981', r: 4 }}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </Card>
-
-        {/* Gráfico de Macros (Hoje) */}
-        <Card className="p-6 border-white/10 bg-black/20 backdrop-blur-sm">
-          <div className="flex items-center gap-2 mb-6">
-            <Target className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-lg font-semibold text-white">Distribuição de Macros - Hoje</h3>
-          </div>
-          <ResponsiveContainer width="100%" height={250}>
-            <PieChart>
-              <Pie
-                data={macrosData}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={90}
-                paddingAngle={5}
-                dataKey="value"
-              >
-                {macrosData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: '#1e293b', 
-                  border: '1px solid #334155',
-                  borderRadius: '8px',
-                  color: '#fff'
-                }}
-                formatter={(value: number) => `${value.toFixed(0)} kcal`}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="flex justify-center gap-6 mt-4">
-            {macrosData.map((macro) => (
-              <div key={macro.name} className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: macro.color }} />
-                <span className="text-sm text-gray-400">{macro.name}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* Gráfico de Barras - Macros Semanais */}
-      <Card className="p-6 border-white/10 bg-black/20 backdrop-blur-sm">
-        <div className="flex items-center gap-2 mb-6">
-          <TrendingUp className="w-5 h-5 text-emerald-400" />
-          <h3 className="text-lg font-semibold text-white">Macronutrientes - Últimos 7 Dias</h3>
-        </div>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={last7Days}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" />
-            <XAxis dataKey="date" stroke="#9ca3af" style={{ fontSize: '12px' }} />
-            <YAxis stroke="#9ca3af" style={{ fontSize: '12px' }} />
-            <Tooltip 
-              contentStyle={{ 
-                backgroundColor: '#1e293b', 
-                border: '1px solid #334155',
-                borderRadius: '8px',
-                color: '#fff'
-              }}
-            />
-            <Bar dataKey="protein" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-            <Bar dataKey="carbs" fill="#f59e0b" radius={[8, 8, 0, 0]} />
-            <Bar dataKey="fat" fill="#a855f7" radius={[8, 8, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-        <div className="flex justify-center gap-6 mt-4">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-blue-500" />
-            <span className="text-sm text-gray-400">Proteínas</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-orange-500" />
-            <span className="text-sm text-gray-400">Carboidratos</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-purple-500" />
-            <span className="text-sm text-gray-400">Gorduras</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-400">{progress.toFixed(0)}% da meta</span>
+              {progress > 100 && (
+                <span className="text-orange-400 flex items-center gap-1">
+                  <TrendingUp className="w-4 h-4" />
+                  Meta excedida
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </Card>
+
+      {/* Macronutrientes Hoje */}
+      <div className="grid sm:grid-cols-3 gap-4">
+        <Card className="p-5 border-white/10 bg-black/20 backdrop-blur-sm">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Proteínas</span>
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+                <Activity className="w-4 h-4 text-white" />
+              </div>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-white">
+                {stats.today.protein.toFixed(1)}
+                <span className="text-sm text-gray-400 ml-1">g</span>
+              </p>
+              <p className="text-xs text-gray-500">Meta: {proteinGoal}g</p>
+            </div>
+            <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full"
+                style={{ width: `${Math.min((stats.today.protein / proteinGoal) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5 border-white/10 bg-black/20 backdrop-blur-sm">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Carboidratos</span>
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-yellow-500 to-orange-500 flex items-center justify-center">
+                <Flame className="w-4 h-4 text-white" />
+              </div>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-white">
+                {stats.today.carbs.toFixed(1)}
+                <span className="text-sm text-gray-400 ml-1">g</span>
+              </p>
+              <p className="text-xs text-gray-500">Meta: {carbsGoal}g</p>
+            </div>
+            <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-yellow-500 to-orange-500 rounded-full"
+                style={{ width: `${Math.min((stats.today.carbs / carbsGoal) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5 border-white/10 bg-black/20 backdrop-blur-sm">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Gorduras</span>
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+                <TrendingDown className="w-4 h-4 text-white" />
+              </div>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-white">
+                {stats.today.fat.toFixed(1)}
+                <span className="text-sm text-gray-400 ml-1">g</span>
+              </p>
+              <p className="text-xs text-gray-500">Meta: {fatGoal}g</p>
+            </div>
+            <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full"
+                style={{ width: `${Math.min((stats.today.fat / fatGoal) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Gráfico Semanal */}
+      <Card className="p-6 border-white/10 bg-black/20 backdrop-blur-sm">
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center">
+              <Calendar className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-white">Últimos 7 Dias</h3>
+              <p className="text-sm text-gray-400">Média: {stats.avgCalories.toFixed(0)} kcal/dia</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {stats.weekly.map((day, i) => {
+              const dayName = new Date(day.date).toLocaleDateString('pt-BR', { weekday: 'short' })
+              const percentage = (day.calories / calorieGoal) * 100
+
+              return (
+                <div key={i} className="space-y-1">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-400 capitalize">{dayName}</span>
+                    <span className="text-white font-medium">{day.calories.toFixed(0)} kcal</span>
+                  </div>
+                  <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-orange-500 to-red-500 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(percentage, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </Card>
+
+      {/* Estatísticas Rápidas */}
+      <div className="grid grid-cols-2 gap-4">
+        <Card className="p-5 border-white/10 bg-black/20 backdrop-blur-sm">
+          <div className="space-y-2">
+            <p className="text-sm text-gray-400">Refeições Hoje</p>
+            <p className="text-3xl font-bold text-white">{stats.totalMeals}</p>
+          </div>
+        </Card>
+
+        <Card className="p-5 border-white/10 bg-black/20 backdrop-blur-sm">
+          <div className="space-y-2">
+            <p className="text-sm text-gray-400">Total Registrado</p>
+            <p className="text-3xl font-bold text-white">{meals.length}</p>
+          </div>
+        </Card>
+      </div>
     </div>
   )
 }
